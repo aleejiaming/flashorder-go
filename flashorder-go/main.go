@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"github.com/gin-gonic/gin"
+	"time" //引入時間套件
 )
 
 // 1. 定義前端傳入的 JSON 結構體 (Struct)
@@ -62,8 +63,13 @@ func main() {
 			return
 		}
 
+		// 故意延遲50毫秒 模擬資料庫讀寫延遲，把並發裝況放大
+		time.Sleep(50 * time.Millisecond)
+
 		// 扣減庫存 (注意：目前這個寫法在高並發下會有 Bug，這就是我們故意的！)
 		inventory[req.ProductID] = currentStock - req.Quantity
+
+		fmt.Printf("【⚠️ 庫存警報】商品 ID: %d, 被扣減後的殘餘庫存: %d\n", req.ProductID, inventory[req.ProductID])
 
 		// 回傳成功 JSON
 		c.JSON(http.StatusOK, gin.H{
