@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"github.com/gin-gonic/gin"
 	"time" //引入時間套件
+	"sync" //引入sync套件
 )
 
 // 1. 定義前端傳入的 JSON 結構體 (Struct)
@@ -20,6 +21,8 @@ type OrderRequest struct {
 var inventory = map[int]int{
 	1: 5, 
 }
+
+var mu sync.Mutex
 
 func main() {
 	r := gin.Default()
@@ -41,6 +44,11 @@ func main() {
 			})
 			return
 		}
+
+		// ✨【關鍵防線】只要一通過 JSON 驗證，準備碰庫存地圖前，立刻上鎖！
+		mu.Lock()
+		// 使用 defer，確保這個點餐請求結束（不論成功或失敗）的最後一刻，一定會釋放鎖
+		defer mu.Unlock()
 
 		// 4. 核心商業邏輯處理
 		currentStock, exists := inventory[req.ProductID]
