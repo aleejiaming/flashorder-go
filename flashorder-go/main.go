@@ -1,64 +1,106 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
+	"time"
+
 	"github.com/gin-gonic/gin"
-	"time" //引入時間套件
-	"sync" //引入sync套件
+	_ "github.com/glebarez/go-sqlite"
 )
 
-// 1. 定義前端傳入的 JSON 結構體 (Struct)
-// tag 裡面的 json:"product_id" 代表對應的 JSON 欄位名稱
-// binding:"required" 代表這個欄位必填，min=1 代表數量至少要 1 份
 type OrderRequest struct {
 	ProductID int `json:"product_id" binding:"required"`
 	Quantity  int `json:"quantity" binding:"required,min=1"`
 }
 
-// 2. 模擬資料庫庫存 (全域變數)
-// 商品 ID 1 (招牌牛腩) 目前庫存剩 5 份
-var inventory = map[int]int{
-	1: 5, 
+var db *sql.DB
+
+// 🛠️ 新增一個精準診斷工具：用來印出當下連線池的健康檢查報告
+func printDBStats(stage string) {
+	stats := db.Stats()
+	fmt.Printf("📊【連線池動態 | %s】正在使用: %d | 累計排隊次數: %d | 累計排隊總耗時: %v\n",
+		stage, stats.InUse, stats.WaitCount, stats.WaitDuration)
 }
 
-var mu sync.Mutex
+func initDB() {
+	var err error
+	db, err = sql.Open("sqlite", "orders.db")
+	if err != nil {
+		panic("資料庫連線失敗: " + err.Error())
+	}
+
+	// 限制最大連線數為 1
+	// 這樣 Go 的連線池就會自動在記憶體裡幫 50 個請求排隊，解決 SQLite 鎖定問題！
+	db.SetMaxOpenConns(1)
+
+	createTableSQL := `
+	CREATE TABLE IF NOT EXISTS products (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		stock INTEGER NOT NULL
+	);`
+	
+	//開啟資料庫交易 (Transaction)
+	_, err = db.Exec(createTableSQL)
+	if err != nil {
+		panic("建立資料表失敗: " + err.Error())
+	}
+
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM products WHERE id = 1").Scan(&count)
+	if err != nil {
+		panic("檢查初始資料失敗: " + err.Error())
+	}
+
+	if count == 0 {
+		_, err = db.Exec("INSERT INTO products (id, name, stock) VALUES (1, '招牌牛腩', 5)")
+		if err != nil {
+			panic("初始化商品失敗: " + err.Error())
+		}
+		fmt.Println("🎉 資料庫初始化成功！已成功建立『招牌牛腩』庫存：5 份")
+	}
+}
 
 func main() {
+	initDB()
+	defer db.Close()
+
 	r := gin.Default()
 
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "success", "message": "pong"})
-	})
-
-	// 3. 建立點餐的 POST 路由
 	r.POST("/api/v1/orders", func(c *gin.Context) {
 		var req OrderRequest
-
-		// Gin 的強大功能：自動將前端的 JSON 綁定到 req 變數中
 		if err := c.ShouldBindJSON(&req); err != nil {
-			// 如果前端傳入的格式不對（例如數量小於 1，或欄位缺失）
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  "failed",
-				"message": "無效的請求資料: " + err.Error(),
-			})
+			c.JSON(http.StatusBadRequest, gin.H{"status": "failed", "message": err.Error()})
 			return
 		}
 
-		// ✨【關鍵防線】只要一通過 JSON 驗證，準備碰庫存地圖前，立刻上鎖！
-		mu.Lock()
-		// 使用 defer，確保這個點餐請求結束（不論成功或失敗）的最後一刻，一定會釋放鎖
-		defer mu.Unlock()
+		// 🛑 捕捉點一：嘗試獲取連線與開啟交易
+		tx, err := db.Begin()
+		if err != nil {
+			// 💥 精準捕捉：連線池滿了、超時、或中斷的底層原因
+			fmt.Printf("❌【🔥 獲取連線失敗】%v\n", err)
+			printDBStats("獲取連線階段")
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "伺服器忙碌中"})
+			return
+		}
+		
+		// 每次有人成功拿到連線，就偷偷觀察一下後台排隊狀況
+		printDBStats("成功拿取連線")
 
-		// 4. 核心商業邏輯處理
-		currentStock, exists := inventory[req.ProductID]
-		// 驚嘆號 ! 代表「非」，!exists 就是「如果不存在」
-		// 這裡就能精準抓到：你點了店裡沒賣的東西，直接回傳 404 錯誤！
-		if !exists {
-			c.JSON(http.StatusNotFound, gin.H{
-				"status":  "failed",
-				"message": "找不到該商品",
-			})
+		defer tx.Rollback()
+
+		// 🛑 捕捉點二：查詢庫存階段
+		var currentStock int
+		err = tx.QueryRow("SELECT stock FROM products WHERE id = ?", req.ProductID).Scan(&currentStock)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				c.JSON(http.StatusNotFound, gin.H{"status": "failed", "message": "找不到該商品"})
+			} else {
+				fmt.Printf("❌【🔍 庫存查詢失敗】%v\n", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "系統異常"})
+			}
 			return
 		}
 
@@ -71,19 +113,32 @@ func main() {
 			return
 		}
 
-		// 故意延遲50毫秒 模擬資料庫讀寫延遲，把並發裝況放大
+		// 模擬真實讀寫延遲
 		time.Sleep(50 * time.Millisecond)
 
-		// 扣減庫存 (注意：目前這個寫法在高並發下會有 Bug，這就是我們故意的！)
-		inventory[req.ProductID] = currentStock - req.Quantity
+		// 🛑 捕捉點三：寫回資料庫階段
+		newStock := currentStock - req.Quantity
+		_, err = tx.Exec("UPDATE products SET stock = ? WHERE id = ?", newStock, req.ProductID)
+		if err != nil {
+			fmt.Printf("❌【💾 寫入資料庫失敗】%v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "寫入失敗"})
+			return
+		}
 
-		fmt.Printf("【⚠️ 庫存警報】商品 ID: %d, 被扣減後的殘餘庫存: %d\n", req.ProductID, inventory[req.ProductID])
+		// 🛑 捕捉點四：提交交易階段
+		err = tx.Commit()
+		if err != nil {
+			fmt.Printf("❌【🏁 交易提交失敗】%v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "訂單確認失敗"})
+			return
+		}
 
-		// 回傳成功 JSON
+		fmt.Printf("【🛡️ DB 安全寫入】商品 ID: %d, 正確扣減後的殘餘庫存為: %d\n", req.ProductID, newStock)
+
 		c.JSON(http.StatusOK, gin.H{
-			"status":  "success",
-			"message": "點餐成功，已為您預留庫存！",
-			"remaining_stock": inventory[req.ProductID],
+			"status":          "success",
+			"message":         "點餐成功，已從資料庫扣除庫存！",
+			"remaining_stock": newStock,
 		})
 	})
 
