@@ -7,14 +7,14 @@ import (
 )
 
 func main() {
-	// 1. 初始化資料庫與連線池
+	// 1. 初始化 SQLite 總帳本
 	database.InitDB()
 	defer database.DB.Close()
 
+	// 2. 初始化 Redis 前線護盾
+	database.InitRedis() 
+
 	r := gin.Default()
-
-	// 2. 註冊路由，直接把櫃檯任務交給 handler 處理
 	r.POST("/api/v1/orders", handler.CreateOrder)
-
 	r.Run(":8080")
 }
