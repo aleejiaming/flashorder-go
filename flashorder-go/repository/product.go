@@ -36,3 +36,10 @@ func UpdateStockOptimistic(tx *sql.Tx, productID int, newStock int, oldVersion i
 	}
 	return res.RowsAffected()
 }
+
+	// CreateOrderRecord 🌟 新增：在 PostgreSQL 中寫入一筆真實的訂單流水帳
+func CreateOrderRecord(tx *sql.Tx, productID int, quantity int) error {
+	// 記得 PostgreSQL 的佔位符是 $1, $2
+	_, err := tx.Exec("INSERT INTO orders (product_id, quantity) VALUES ($1, $2)", productID, quantity)
+	return err
+	}

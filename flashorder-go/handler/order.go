@@ -73,7 +73,15 @@ func CreateOrder(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "寫入總帳失敗"})
 		return
 	}
+	
+	// 🌟【關鍵新增】2. 既然庫存扣成功了，立刻在同一個交易裡寫入點單明細
+	err = repository.CreateOrderRecord(tx, req.ProductID, req.Quantity)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "建立訂單明細失敗"})
+		return
+	}
 
+	// 3. 兩件事都做成功了，才一起 Commit 提交！
 	err = tx.Commit()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "提交總帳失敗"})
@@ -105,3 +113,5 @@ func GetStock(c *gin.Context) {
 		"stock":  redisStock,
 	})
 }
+
+
