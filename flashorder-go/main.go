@@ -12,9 +12,18 @@ func main() {
 	defer database.DB.Close()
 
 	// 2. 初始化 Redis 前線護盾
-	database.InitRedis() 
+	database.InitRedis()
 
 	r := gin.Default()
+
+	// 🌟【新增】當使用者瀏覽網頁首頁 (http://localhost:8080/) 時，直接送出 public/index.html
+	r.StaticFile("/", "./public/index.html")
+
+	// 🌟【新增】提供給前端獲取最新庫存的 API
+	r.GET("/api/v1/products/1/stock", handler.GetStock)
+
+	// 3. 原有的秒殺下單 API
 	r.POST("/api/v1/orders", handler.CreateOrder)
+
 	r.Run(":8080")
 }

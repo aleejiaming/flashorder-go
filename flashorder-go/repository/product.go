@@ -4,21 +4,35 @@ import (
 	"database/sql"
 )
 
-// GetStockAndVersion 同時抓取庫存與當前的防偽版本號
+// GetStockForUpdate 查詢當前實體庫存 (這裡我們加入了 FOR UPDATE 行級鎖鎖定)
+func GetStockForUpdate(tx *sql.Tx, productID int) (int, error) {
+	var stock int
+	// 🌟 1. 改用 $1 佔位符
+	// 🌟 2. 後方加入 FOR UPDATE，讓 Postgres 在實體資料庫層面幫這 5 個決賽圈的人精準排隊！
+	err := tx.QueryRow("SELECT stock FROM products WHERE id = $1 FOR UPDATE", productID).Scan(&stock)
+	return stock, err
+}
+
+// UpdateStock 更新實體庫存
+func UpdateStock(tx *sql.Tx, productID int, newStock int) error {
+	// 🌟 改用 $1 和 $2 佔位符
+	_, err := tx.Exec("UPDATE products SET stock = $1 WHERE id = $2", newStock, productID)
+	return err
+}
+
+// =========================================================================
+// 舊的樂觀鎖留念（可不改，但若想保持語法正確，一樣要把問號改成 $1 $2 $3）
+// =========================================================================
 func GetStockAndVersion(tx *sql.Tx, productID int) (int, int, error) {
 	var stock, version int
-	err := tx.QueryRow("SELECT stock, version FROM products WHERE id = ?", productID).Scan(&stock, &version)
+	err := tx.QueryRow("SELECT stock, version FROM products WHERE id = $1", productID).Scan(&stock, &version)
 	return stock, version, err
 }
 
-// UpdateStockOptimistic 樂觀鎖更新：只有當版本號和剛才查到的一模一樣時，才允許寫入，並自動將版本號 + 1
 func UpdateStockOptimistic(tx *sql.Tx, productID int, newStock int, oldVersion int) (int64, error) {
-	res, err := tx.Exec("UPDATE products SET stock = ?, version = version + 1 WHERE id = ? AND version = ?", newStock, productID, oldVersion)
+	res, err := tx.Exec("UPDATE products SET stock = $1, version = version + 1 WHERE id = $2 AND version = $3", newStock, productID, oldVersion)
 	if err != nil {
 		return 0, err
 	}
-	
-	// RowsAffected 會告訴我們這次 SQL 到底成功修改了幾筆資料
-	// 如果是 0，代表版本號對不上，有人偷跑了！
 	return res.RowsAffected()
 }

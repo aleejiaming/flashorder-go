@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlashOrder Go - 限時限量秒殺點餐系統</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
+
+    <div class="container mx-auto px-4 py-8 max-w-5xl">
+        <header class="text-center mb-12">
+            <h1 class="text-4xl font-extrabold text-amber-400 tracking-wider mb-2">⚡ FlashOrder Go</h1>
+            <p class="text-slate-400">工業級高併發秒殺點餐系統 (Redis + Go + SQLite)</p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            
+            <div class="bg-slate-800 rounded-2xl p-6 border border-slate-700 shadow-xl flex flex-col justify-between">
+                <div>
+                    <div class="h-48 bg-amber-900/30 rounded-xl flex items-center justify-center border border-amber-500/20 mb-6">
+                        <span class="text-6xl">🍲</span>
+                    </div>
+                    <div class="flex justify-between items-start mb-4">
+                        <div>
+                            <span class="bg-amber-400 text-slate-900 text-xs font-bold px-2.5 py-1 rounded-sm uppercase tracking-wider">今日限量秒殺</span>
+                            <h2 class="text-2xl font-bold mt-2">招牌黑金牛腩飯</h2>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-sm text-slate-400">秒殺價</p>
+                            <p class="text-2xl font-black text-amber-400">$ 120</p>
+                        </div>
+                    </div>
+                    <p class="text-slate-400 text-sm leading-relaxed mb-6">
+                        嚴選上等牛腩，搭配獨門秘製黑金醬汁慢火細燉。肉質綿密軟嫩、入口即化。前線採用 Redis 護盾，全台僅存限量份數，搶完為止！
+                    </p>
+                </div>
+
+                <div class="bg-slate-900/50 rounded-xl p-4 border border-slate-700/50">
+                    <div class="flex justify-between items-center mb-4">
+                        <span class="text-slate-300 font-medium">前線記憶體剩餘庫存：</span>
+                        <span id="stock-badge" class="text-2xl font-black text-emerald-400 bg-emerald-950/50 px-4 py-1 rounded-lg border border-emerald-500/30">--</span>
+                    </div>
+                    <button id="btn-order" onclick="singleOrder()" class="w-full bg-amber-400 hover:bg-amber-500 text-slate-900 font-bold py-3.5 px-4 rounded-xl transition duration-200 shadow-lg disabled:bg-slate-600 disabled:text-slate-400 cursor-pointer">
+                        立即搶購
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-slate-800 rounded-2xl p-6 border border-slate-700 shadow-xl">
+                <div class="flex items-center gap-2 mb-4 border-b border-slate-700 pb-3">
+                    <span class="text-xl">🛡️</span>
+                    <h3 class="text-lg font-bold text-slate-200">開發者併發壓測控制台</h3>
+                </div>
+                
+                <p class="text-slate-400 text-xs leading-relaxed mb-6">
+                    此面板模擬高併發場景。點擊按鈕後，瀏覽器將利用 <code class="text-amber-400">Promise.all</code> 在**同一微秒內同時向後端發射 50 筆請求**，用以驗證 Redis 攔截成效。
+                </p>
+
+                <div class="mb-6">
+                    <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">模擬併發請求數量</label>
+                    <input type="number" id="input-concurrency" value="50" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-amber-400">
+                </div>
+
+                <button id="btn-stress" onclick="stressTest()" class="w-full bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600 text-white font-bold py-3.5 px-4 rounded-xl transition duration-200 shadow-lg cursor-pointer">
+                    🚀 發動集體衝鋒壓測
+                </button>
+
+                <div class="mt-6 bg-slate-900 rounded-xl p-4 border border-slate-700/50">
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">即時壓測戰況統計</h4>
+                    <div class="grid grid-cols-3 gap-3 text-center">
+                        <div class="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                            <p class="text-xs text-emerald-400 font-medium">✅ 200 成功</p>
+                            <p id="stat-200" class="text-xl font-bold mt-1 text-emerald-200">0</p>
+                        </div>
+                        <div class="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                            <p class="text-xs text-amber-400 font-medium">🛑 422 售罄</p>
+                            <p id="stat-422" class="text-xl font-bold mt-1 text-amber-200">0</p>
+                        </div>
+                        <div class="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                            <p class="text-xs text-rose-400 font-medium">💥 500 錯誤</p>
+                            <p id="stat-500" class="text-xl font-bold mt-1 text-rose-200">0</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // 頁面加載完成時，自動去撈一次最新庫存
+        window.onload = function() {
+            refreshStock();
+        };
+
+        // 刷新庫存的通用函式
+        function refreshStock() {
+            fetch('/api/v1/products/1/stock')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        const stock = parseInt(data.stock);
+                        document.getElementById('stock-badge').innerText = stock;
+                        
+                        // 如果庫存小於等於 0，把單次搶購按鈕封印
+                        if (stock <= 0) {
+                            const btn = document.getElementById('btn-order');
+                            btn.innerText = '已全數售罄';
+                            btn.disabled = true;
+                            document.getElementById('stock-badge').className = "text-2xl font-black text-slate-500 bg-slate-950/50 px-4 py-1 rounded-lg border border-slate-700";
+                        }
+                    }
+                });
+        }
+
+        // 【功能一】單筆正常搶購
+        function singleOrder() {
+            const btn = document.getElementById('btn-order');
+            btn.disabled = true;
+            btn.innerText = '處理中...';
+
+            fetch('/api/v1/orders', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ product_id: 1, quantity: 1 })
+            })
+            .then(async res => {
+                const data = await res.json();
+                if (res.status === 200) {
+                    alert('🎉 ' + data.message);
+                } else {
+                    alert('🛑 ' + data.message);
+                }
+                refreshStock();
+            })
+            .catch(err => alert('網絡異常: ' + err))
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerText = '立即搶購';
+            });
+        }
+
+        // 【功能二】核心：50 人微秒級集體衝鋒壓測
+        function stressTest() {
+            const count = parseInt(document.getElementById('input-concurrency').value) || 50;
+            const btn = document.getElementById('btn-stress');
+            
+            // 重置統計看板
+            let count200 = 0;
+            let count422 = 0;
+            let count500 = 0;
+            updateStats(0, 0, 0);
+
+            btn.disabled = true;
+            btn.innerText = `🚀 ${count}人衝鋒中...`;
+
+            // 準備集體發射的 Promise 陣列
+            const requests = [];
+
+            for (let i = 0; i < count; i++) {
+                // 將每個 fetch 丟進陣列，此時還沒集體引爆
+                const req = fetch('/api/v1/orders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ product_id: 1, quantity: 1 })
+                })
+                .then(res => {
+                    if (res.status === 200) count200++;
+                    else if (res.status === 422) count422++;
+                    else count500++;
+                    
+                    // 每回來一筆，就即時刷新統計數字
+                    updateStats(count200, count422, count500);
+                })
+                .catch(() => {
+                    count500++;
+                    updateStats(count200, count422, count500);
+                });
+                
+                requests.push(req);
+            }
+
+            // 🔥【集體引爆點】利用 Promise.all 讓這 50 筆請求同時並發射出！
+            Promise.all(requests).then(() => {
+                btn.disabled = false;
+                btn.innerText = '🚀 發動集體衝鋒壓測';
+                refreshStock(); // 壓測結束後刷新庫存畫面
+            });
+        }
+
+        // 更新統計看板的輔助函式
+        function updateStats(c200, c422, c500) {
+            document.getElementById('stat-200').innerText = c200;
+            document.getElementById('stat-422').innerText = c422;
+            document.getElementById('stat-500').innerText = c500;
+        }
+    </script>
+</body>
+</html>
