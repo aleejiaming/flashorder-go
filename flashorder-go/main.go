@@ -25,5 +25,9 @@ func main() {
 	// 3. 原有的秒殺下單 API
 	r.POST("/api/v1/orders", handler.CreateOrder)
 
+	// 🌟【全新加入】身分驗證大廳
+	r.POST("/api/v1/auth/signup", handler.SignUp) // 註冊櫃檯
+	r.POST("/api/v1/auth/login", handler.Login)   // 登入櫃檯
+
 	r.Run(":8080")
 }
