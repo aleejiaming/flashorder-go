@@ -40,7 +40,7 @@ func CreateOrder(c *gin.Context) {
 	redisKey := fmt.Sprintf("product:%d:stock", req.ProductID)
 
 	// 【第一道防線】直接在 Redis 記憶體裡把庫存減 1
-	redisStock, err := database.RDB.Decr(ctx, redisKey).Result()
+	redisStock, err := database.RedisClient.Decr(ctx, redisKey).Result()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "快取系統異常: " + err.Error()})
 		return
@@ -48,7 +48,7 @@ func CreateOrder(c *gin.Context) {
 
 	// 如果扣減後的數值小於 0，代表沒庫存了
 	if redisStock < 0 {
-		database.RDB.Incr(ctx, redisKey) // 補償機制
+		database.RedisClient.Incr(ctx, redisKey) // 補償機制
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"status":  "failed",
 			"message": "很抱歉，招牌牛腩已被搶購一空！(由 Redis 攔截)",
@@ -119,7 +119,7 @@ func CreateOrder(c *gin.Context) {
 // =========================================================================
 func GetStock(c *gin.Context) {
 	ctx := context.Background()
-	redisStock, err := database.RDB.Get(ctx, "product:1:stock").Result()
+	redisStock, err := database.RedisClient.Get(ctx, "product:1:stock").Result()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "讀取快取失敗"})
 		return
