@@ -20,6 +20,16 @@ type OrderRequest struct {
 // 1. 核心秒殺下單 API
 // =========================================================================
 func CreateOrder(c *gin.Context) {
+
+	// 🌟【關鍵新增】從警衛貼在請求胸口的備忘錄裡，撈出 user_id
+	// c.Get 回傳的是空介面，我們要用 .(int) 斷言它是一個整數型態（這就是 Go 的強型別規範）
+	rawUserID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "failed", "message": "無法識別會員身分"})
+		return
+	}
+	userID := rawUserID.(int) // 正式轉職為 Go 的 int 變數
+
 	var req OrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "failed", "message": err.Error()})
@@ -66,17 +76,24 @@ func CreateOrder(c *gin.Context) {
 	// 模擬實體寫入硬碟的延遲
 	time.Sleep(50 * time.Millisecond)
 
-	// 直接更新 SQLite 總帳
+	// 1. 更新實體總帳庫存
 	newStock := currentStock - req.Quantity
 	err = repository.UpdateStock(tx, req.ProductID, newStock)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "寫入總帳失敗"})
-		return
+		// 🚨【補償機制】Postgres 扣庫存失敗了，立刻把 Redis 的庫存加回來！
+		// database.RedisClient.IncrBy 負責把指定的 key 加上指定的數量
+		database.RedisClient.IncrBy(c.Request.Context(),"product:1:stock",int64(req.Quantity))
+		tx.Rollback() // 資料庫回滾
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "寫入總帳失敗，已回滾快取"})
+		return	
 	}
 	
-	// 🌟【關鍵新增】2. 既然庫存扣成功了，立刻在同一個交易裡寫入點單明細
-	err = repository.CreateOrderRecord(tx, req.ProductID, req.Quantity)
+	// 🌟【關鍵新增】2. 建立訂單流水帳，順手把剛剛拿到的 userID 塞進去！
+	err = repository.CreateOrderRecord(tx, req.ProductID, req.Quantity , userID)
 	if err != nil {
+		fmt.Println("❌ PostgreSQL 拒絕寫入訂單，原因:", err)
+		database.RedisClient.IncrBy(c.Request.Context(), "product:1:stock", int64(req.Quantity))
+		tx.Rollback() // 資料庫回滾
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "failed", "message": "建立訂單明細失敗"})
 		return
 	}
