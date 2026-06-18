@@ -1,0 +1,36 @@
+# 1. 幫這條流水線取個名字
+name: Go Automated Testing
+
+# 2. 觸發時機（Event）：當有人把程式碼 push（推上）到 main 分支時，立刻發動
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+# 3. 流水線要做的工作（Jobs）
+jobs:
+  # 這一站叫作「單元測試站 (test-job)」
+  test-job:
+    # 叫 GitHub 幫我們開一台免費的 Ubuntu 虛擬微型伺服器（Runner）來跑程式
+    runs-on: ubuntu-latest
+
+    # 這一站裡面要執行的細部步驟（Steps）
+    steps:
+    # 步驟一：把我們在 GitHub 上的程式碼「複製（Checkout）」到這台虛擬伺服器裡
+    - name: Checkout repository code
+      uses: actions/checkout@v4
+
+    # 步驟二：在這台伺服器上安裝 Go 語言環境（就像在全新電腦安裝 Go 一樣）
+    - name: Set up Go environment
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26' # 🌟 設定跟你專案相符的 Go 版本
+
+    # 步驟三：自動下載專案需要的第三方擴充庫（如 Gin, Bcrypt, golang-jwt）
+    - name: Install dependencies
+      run: go mod download
+
+    # 步驟四：終極大絕招！自動執行全專案的單元測試
+    - name: Run Unit Tests
+      run: go test -v ./...
