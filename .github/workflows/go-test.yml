@@ -28,4 +28,4 @@ jobs:
 
     # 🌟 修改這行：我們目前只測試 service 資料夾 (不再用 ./... 盲目測全家)
     - name: Run Unit Tests
-      run: go test -v ./service
+      run: go test -v ./...
