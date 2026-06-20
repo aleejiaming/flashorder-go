@@ -1,0 +1,11 @@
+# 這是 Docker Compose 的設定檔
+version: '3.8'
+
+services:
+  # 我們的第一個基礎設施：Redis 快取伺服器
+  redis:
+    image: redis:7-alpine
+    container_name: flashorder-redis
+    ports:
+      - "6379:6379"
+    restart: always
