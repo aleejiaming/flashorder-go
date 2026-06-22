@@ -6,7 +6,7 @@ import (
 
     // 💡 這裡要引入你剛剛寫好的 repository 模組
     // (注意：這裡的 flashorder-go 要替換成你 go.mod 裡面的 module 名稱)
-	"flashorder-go/repository"
+	//"flashorder-go/repository"
 )
 
 // ==========================================
@@ -20,40 +20,44 @@ type OrderService interface {
 // 2. 定義實體結構 —— 這是主廚「本人」
 // ==========================================
 type orderServiceImpl struct {
-	// 🌟 核心關鍵：主廚的口袋裡，隨時帶著一個「倉管員 (Repository)」
-    // 注意這裡我們依賴的是「介面 (Interface)」，而不是某個具體的實作！
-	repo repository.OrderRepository
+	// 主廚現在不帶倉管員了，他改帶一個「排隊箱 (Channel)」！
+	// chan string 代表這個箱子只能裝字串 (訂單號)
+	// <-chan 代表「只能拿出來」，chan<- 代表「只能丟進去」，chan 則是「都可以」
+	// 這裡主廚只需把單子丟進去，所以是 chan
+	orderQueue chan string 
 }
 
 // ==========================================
 // 3. 工廠函式 —— 聘請主廚，並把倉管員分配給他
 // ==========================================
-func NewOrderService(r repository.OrderRepository) OrderService {
+func NewOrderService(queue chan string) OrderService {
 	return &orderServiceImpl{
-		repo: r, // 把傳進來的倉管員，收進主廚的口袋裡
+		orderQueue: queue, // 把排隊箱交給主廚
 	}
 }
 
-// ==========================================
-// 4. 實作合約方法 —— 主廚開始做菜 (商業邏輯)
-// ==========================================
+
 func (s *orderServiceImpl) ProcessOrder(orderID string) error {
 	log.Printf("👨‍🍳 [Service] 收到訂單請求，開始驗證邏輯... 訂單號: %s\n", orderID)
 
-	// 💡 商業邏輯 1：檢查訂單號碼是否為空
+	// 檢查訂單號碼
 	if orderID == "" {
-		log.Println("❌ [Service] 錯誤：訂單號碼不能為空！")
 		return errors.New("invalid order ID")
 	}
 
-	// 💡 商業邏輯 2：(未來可以在這裡加入 Redis 扣庫存的邏輯)
-	log.Println("✅ [Service] 驗證通過！準備交給 Repository 寫入資料庫...")
+	
+	// ==========================================
+	// 4. 實作合約方法 (主廚做菜邏輯)
+	// ==========================================
+	// 🌟 魔法發生在這裡！
+	// 主廚驗證完畢後，不再呼叫 repo.SaveOrder。
+	// 他直接把訂單號碼「丟上輸送帶 (排隊箱)」，然後立刻跟服務生說 OK！
+	
+	// 語法： 輸送帶 <- 物品
+	s.orderQueue <- orderID
+	
+	log.Printf("📥 [Service] 訂單 %s 已快速丟入排隊箱！主廚立刻去接下一單！\n", orderID)
 
-	// 🌟 呼叫口袋裡的倉管員，幫忙把資料存進去
-	err := s.repo.SaveOrder(orderID)
-	if err != nil {
-		return err
-	}
-
+	// 立刻回傳 nil (成功)，完全不浪費時間等資料庫寫入
 	return nil
 }
