@@ -11,10 +11,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
+	"github.com/golang-jwt/jwt/v5"
 
 	"flashorder-go/handler"
 	"flashorder-go/repository"
 	"flashorder-go/service"
+	"flashorder-go/middleware"
 )
 // ==========================================
 // 👷 建立「打工人」的工作邏輯 (這是全新的函數，寫在 main 的上面)
@@ -67,6 +69,9 @@ func main() {
 		go worker(i, orderQueue, orderRepo) 
 	}
 
+	//【新增步驟】驗證使用者資訊，回傳一組「解密金鑰」
+	authService := service.NewAuthService("flashorder-super-secret-key")
+
 	// 步驟 4：聘請主廚，【注意：現在交給主廚的是排隊箱 orderQueue】
 	orderService := service.NewOrderService(orderQueue)
 
@@ -74,10 +79,38 @@ func main() {
 	orderHandler := handler.NewOrderHandler(orderService)
 
 	// ==========================================
+	// 🎟️ 臨時發放機：不需要連資料庫，直接給你一張合法的 JWT 通行證
+	// ==========================================
+	r.GET("/test-login", func(c *gin.Context) {
+		// 1. 製造一張手環，把使用者 ID 設為 "VIP_999"
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"user_id": "VIP_999", 
+		})
+
+		// 2. 蓋上跟保安主管一模一樣的「專屬金鑰」印章！
+		// (注意：這裡的字串必須跟 authService 裡的一模一樣)
+		tokenString, err := token.SignedString([]byte("flashorder-super-secret-key"))
+		if err != nil {
+			c.JSON(500, gin.H{"error": "手環製作失敗"})
+			return
+		}
+
+		// 3. 把手環交給客人
+		c.JSON(200, gin.H{
+			"message": "登入成功！請複製下面的 token",
+			"token":   tokenString,
+		})
+	})
+
+	// ==========================================
 	// 📍 路由綁定 (Routing)
 	// 📍 路由與啟動 (跟之前一樣，具備優雅關機)
 	// ==========================================
-	r.POST("/order", orderHandler.CreateOrder)
+	r.POST("/order",
+		middleware.RateLimiter(rdb, 3, 1*time.Second), // 第一道：防連點 (每秒最多 3 次)
+		middleware.AuthMiddleware(authService),        // 第二道：驗證 JWT 手環 (傳入保安主管)
+		orderHandler.CreateOrder,                      // 最後：服務生接單
+		)
 
 	srv := &http.Server{
 		Addr:    ":8080",
