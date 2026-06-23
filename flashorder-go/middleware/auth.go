@@ -5,13 +5,15 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gin-gonic/gin"
+	
 	// 🚨【請根據你的 go.mod 修改路徑】把 sideproject 改成你的模組名稱！
 	"flashorder-go/service"
-	"github.com/gin-gonic/gin"
 )
 
 // AuthMiddleware 🌟 大門警衛核心：攔截請求、驗算 JWT 手環
-func AuthMiddleware() gin.HandlerFunc {
+// 【架構大升級】：現在警衛不能自己驗算了！老闆在派警衛站崗時，必須把「保安主管 (authService)」配發給他
+func AuthMiddleware(authService service.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. 從 HTTP Header 裡面撈出名為 "Authorization" 的口袋
 		authHeader := c.GetHeader("Authorization")
@@ -29,8 +31,9 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// 3. 🧠 調用我們上次寫的數學工廠，驗算這條手環（parts[1] 就是 JWT 本身）
-		claims, err := service.ValidateToken(parts[1])
+		// 3. 🧠 【新架構的魔法在這裡】
+		// 警衛不自己算數學了，他把手環 (parts[1]) 交給口袋裡的保安主管 (authService) 去驗算！
+		userID, err := authService.ValidateToken(parts[1])
 		if err != nil {
 			fmt.Println("❌ JWT 驗算失敗原因:", err)
 			c.JSON(http.StatusUnauthorized, gin.H{"status": "failed", "message": "無效的通行證或通行證已過期"})
@@ -38,9 +41,9 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// 4. 🎉 驗算成功！警衛把拆解出來的會員資料，寫入 Gin 的 Context 備忘錄裡
-		c.Set("user_id", claims.UserID)
-		c.Set("username", claims.Username)
+		// 4. 🎉 驗算成功！警衛把保安主管解析出來的「會員 ID (userID)」，寫入 Gin 的 Context 備忘錄裡
+		// 這樣後面的「點餐服務生 (OrderHandler)」就可以知道是誰在點餐了
+		c.Set("user_id", userID)
 
 		// 5. 放行！讓請求高高興興地走進下一個內場 Handler 房間
 		c.Next()
